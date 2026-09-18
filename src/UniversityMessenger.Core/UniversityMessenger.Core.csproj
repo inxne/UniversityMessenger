@@ -7,11 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Remove="Models\ChatMember.cs" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Include="Models\ChatMember.cs" />
+    <PackageReference Include="BCrypt.Net-Next" Version="4.2.0" />
   </ItemGroup>
 
 </Project>
