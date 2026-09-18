@@ -1,93 +1,108 @@
 ﻿using UniversityMessenger.Core.Models;
+using UniversityMessenger.Core.Services;
+using UniversityMessenger.Core.Storage;
 
-// ---------- 1. Создаём двух пользователей ----------
+// --- Сборка приложения: хранилище плюс сервисы ---
+IStorage storage = new InMemoryStorage();
+var authService = new AuthService(storage);
+var userService = new UserService(storage);
+var chatService = new ChatService(storage);
 
-var studentFullName = "Иванов Иван Иванович";
-var student = new User
+// --- 1. Регистрируем трёх пользователей ---
+var student = authService.Register(
+    email: "student@test.local",
+    password: "Student123!",
+    fullName: "Иванов Иван Иванович",
+    role: Role.Student,
+    faculty: "Информационные технологии",
+    course: 2,
+    consent: true);
+
+var teacher = authService.Register(
+    email: "teacher@test.local",
+    password: "Teacher123!",
+    fullName: "Петрова Анна Сергеевна",
+    role: Role.Teacher,
+    faculty: "Информационные технологии",
+    course: null,
+    consent: true);
+
+var admin = authService.Register(
+    email: "admin@test.local",
+    password: "Admin12345!",
+    fullName: "Сидоров Алексей Дмитриевич",
+    role: Role.Admin,
+    faculty: null,
+    course: null,
+    consent: true);
+
+Console.WriteLine("Зарегистрированы:");
+Console.WriteLine($"- {student.FullName} ({student.Role})");
+Console.WriteLine($"- {teacher.FullName} ({teacher.Role})");
+Console.WriteLine($"- {admin.FullName} ({admin.Role})");
+
+// --- 2. Вход под студентом ---
+var logged = authService.Login("student@test.local", "Student123!");
+Console.WriteLine();
+Console.WriteLine($"Вход выполнен: {logged.FullName}");
+
+// --- 2.1. Проверка защиты: неверный пароль ---
+try
 {
-    Email = "student@test.local",
-    FullName = studentFullName,
-    FullNameLower = studentFullName.ToLowerInvariant(),
-    Role = Role.Student,
-    Faculty = "Информационные технологии",
-    Course = 2,
-    ConsentAt = DateTime.UtcNow
-};
-
-var teacherFullName = "Петрова Анна Сергеевна";
-var teacher = new User
+    authService.Login("student@test.local", "wrong-password");
+}
+catch (AppException ex)
 {
-    Email = "teacher@test.local",
-    FullName = teacherFullName,
-    FullNameLower = teacherFullName.ToLowerInvariant(),
-    Role = Role.Teacher,
-    Faculty = "Информационные технологии",
-    About = "Преподаватель кафедры ИТ",
-    ConsentAt = DateTime.UtcNow
-};
+    Console.WriteLine($"Ожидаемая ошибка входа: {ex.Message}");
+}
 
-// ---------- 2. Создаём личный чат между ними ----------
-
-// Сортируем Id пользователей, чтобы ключ чата всегда был одинаковым
-// независимо от того, кто первым нажал кнопку "Написать".
-var ids = new[] { student.Id, teacher.Id }.OrderBy(x => x).ToArray();
-var directKey = $"{ids[0]}:{ids[1]}";
-
-var chat = new Chat
+// --- 3. Поиск пользователя по фамилии ---
+var found = userService.Search(query: "петрова");
+Console.WriteLine();
+Console.WriteLine($"Поиск по запросу петрова: найдено {found.Count}");
+foreach (var u in found)
 {
-    Type = ChatType.Direct,
-    DirectKey = directKey
-};
+    Console.WriteLine($"- {u.FullName}, {u.Role}, {u.Faculty}");
+}
 
-// ---------- 3. Добавляем обоих пользователей в чат ----------
+// --- 4. Личный чат и переписка ---
+var directChat = chatService.GetOrCreateDirectChat(student.Id, teacher.Id);
+var directAgain = chatService.GetOrCreateDirectChat(teacher.Id, student.Id);
+Console.WriteLine();
+Console.WriteLine($"Личный чат создан. Повторный вызов вернул тот же чат: {directAgain.Id == directChat.Id}");
 
-var studentMember = new ChatMember
+chatService.SendMessage(directChat.Id, student.Id, "Здравствуйте! Можно задать вопрос по проекту?");
+chatService.SendMessage(directChat.Id, teacher.Id, "Да, конечно. Слушаю.");
+chatService.SendMessage(directChat.Id, student.Id, "Как оформить диаграмму архитектуры?");
+
+// --- 5. Групповой чат ---
+var groupChat = chatService.CreateGroupChat("ИТ-201: Проектная деятельность", teacher.Id, new List<Guid> { student.Id, admin.Id });
+chatService.SendMessage(groupChat.Id, teacher.Id, "Коллеги, защита проекта в пятницу.");
+
+// --- 6. История сообщений ---
+Console.WriteLine();
+Console.WriteLine($"История личного чата ({chatService.GetChatTitle(directChat.Id, student.Id)}):");
+foreach (var message in chatService.GetHistory(directChat.Id, student.Id))
 {
-    ChatId = chat.Id,
-    UserId = student.Id,
-    MemberRole = ChatMemberRole.Member
-};
-
-var teacherMember = new ChatMember
-{
-    ChatId = chat.Id,
-    UserId = teacher.Id,
-    MemberRole = ChatMemberRole.Member
-};
-
-// ---------- 4. Создаём два сообщения ----------
-
-var message1 = new Message
-{
-    ChatId = chat.Id,
-    SenderId = student.Id,
-    Text = "Здравствуйте! Можно задать вопрос по проекту?"
-};
-
-var message2 = new Message
-{
-    ChatId = chat.Id,
-    SenderId = teacher.Id,
-    Text = "Да, конечно. Слушаю."
-};
-
-// ---------- 5. Выводим результат в консоль ----------
-
-Console.WriteLine("=== Пользователи ===");
-Console.WriteLine($"{student.FullName} ({student.Role})");
-Console.WriteLine($"{teacher.FullName} ({teacher.Role})");
+    var author = authService.GetById(message.SenderId);
+    Console.WriteLine($"[{message.CreatedAt:HH:mm}] {author.FullName}: {message.Text}");
+}
 
 Console.WriteLine();
-Console.WriteLine("=== Чат ===");
-Console.WriteLine($"Тип: {chat.Type}");
-Console.WriteLine($"Ключ личного чата: {chat.DirectKey}");
+Console.WriteLine($"История группы ({chatService.GetChatTitle(groupChat.Id, student.Id)}):");
+foreach (var message in chatService.GetHistory(groupChat.Id, student.Id))
+{
+    var author = authService.GetById(message.SenderId);
+    Console.WriteLine($"[{message.CreatedAt:HH:mm}] {author.FullName}: {message.Text}");
+}
 
+// --- 7. Список чатов студента ---
 Console.WriteLine();
-Console.WriteLine("=== Участники чата ===");
-Console.WriteLine($"Участник 1: {studentMember.UserId}");
-Console.WriteLine($"Участник 2: {teacherMember.UserId}");
-
-Console.WriteLine();
-Console.WriteLine("=== Сообщения ===");
-Console.WriteLine($"{student.FullName}: {message1.Text}");
-Console.WriteLine($"{teacher.FullName}: {message2.Text}");
+Console.WriteLine("Чаты студента:");
+foreach (var chat in chatService.GetChatsOfUser(student.Id))
+{
+    var title = chatService.GetChatTitle(chat.Id, student.Id);
+    var last = chatService.GetHistory(chat.Id, student.Id).LastOrDefault();
+    var lastText = last == null ? "нет сообщений" : last.Text;
+    Console.WriteLine($"- {title}: {lastText}");
+}
