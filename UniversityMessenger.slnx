@@ -2,5 +2,6 @@
   <Folder Name="/src/">
     <Project Path="src/UniversityMessenger.Console/UniversityMessenger.Console.csproj" />
     <Project Path="src/UniversityMessenger.Core/UniversityMessenger.Core.csproj" />
+    <Project Path="src/UniversityMessenger.Server/UniversityMessenger.Server.csproj" />
   </Folder>
 </Solution>
