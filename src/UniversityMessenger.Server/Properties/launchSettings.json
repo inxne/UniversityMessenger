@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "UniversityMessenger.Server": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:43203;http://localhost:43204"
+    }
+  }
+}
