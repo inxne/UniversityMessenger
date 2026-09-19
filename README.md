@@ -17,6 +17,12 @@
 - src/UniversityMessenger.Console — консольное демо логики ядра
 - src/UniversityMessenger.Server — сервер API, http://localhost:5000, Swagger на /swagger
 
+## Документация репозитория
+
+- docs/architecture.md — карта всех файлов и их назначения
+- docs/changelog.md — журнал изменений на русском по каждому коммиту
+- docs/defense-notes.md — шпаргалки к защите, вопросы и ответы
+
 ## Возможности ядра
 
 - Регистрация с проверками и согласием на обработку персональных данных
@@ -39,7 +45,8 @@
 
 - [x] Ядро: модели, хранилище, сервисы, консольное демо
 - [x] Сервер: каркас, health-эндпоинт, Swagger
-- [ ] Эндпоинты auth, users, chats, messages
-- [ ] База данных SQLite
+- [x] Эндпоинты auth, users, chats, messages
+- [ ] Аутентификация через JWT-токены
+- [ ] База данных SQLite через EF Core
 - [ ] Реалтайм через SignalR
 - [ ] Клиент .NET MAUI
