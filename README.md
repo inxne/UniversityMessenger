@@ -8,15 +8,17 @@
 - C#, .NET 10
 - ASP.NET Core (сервер, минимальные API)
 - JWT-токены через Microsoft.AspNetCore.Authentication.JwtBearer
+- EF Core + SQLite (хранение данных)
 - .NET MAUI (клиент, в разработке)
 - BCrypt.Net-Next (хеширование паролей)
 - Swashbuckle (Swagger)
 
 ## Структура
 
-- src/UniversityMessenger.Core — ядро: модели, хранилище, сервисы
+- src/UniversityMessenger.Core — ядро: модели, хранилище, сервисы, контекст базы
 - src/UniversityMessenger.Console — консольное демо логики ядра
 - src/UniversityMessenger.Server — сервер API, http://localhost:5000, Swagger на /swagger
+- messenger.db — файл базы SQLite, создаётся при старте сервера
 
 ## Документация репозитория
 
@@ -32,6 +34,7 @@
 - Поиск пользователей по ФИО без учёта регистра, фильтры по роли, факультету, курсу
 - Личные чаты (один чат на пару людей через DirectKey) и групповые чаты
 - Отправка сообщений с проверкой участия в чате, история переписки
+- Данные хранятся в SQLite и переживают перезапуск сервера
 
 ## Запуск демо ядра
 
@@ -49,6 +52,6 @@
 - [x] Сервер: каркас, health-эндпоинт, Swagger
 - [x] Эндпоинты auth, users, chats, messages
 - [x] Аутентификация через JWT-токены
-- [ ] База данных SQLite через EF Core
+- [x] База данных SQLite через EF Core
 - [ ] Реалтайм через SignalR
 - [ ] Клиент .NET MAUI
