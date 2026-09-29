@@ -2,25 +2,34 @@
 using System.Security.Claims;
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
+using UniversityMessenger.Core.Data;
 using UniversityMessenger.Core.Models;
 using UniversityMessenger.Core.Services;
 using UniversityMessenger.Core.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddSingleton<IStorage, InMemoryStorage>();
-builder.Services.AddSingleton<AuthService>();
-builder.Services.AddSingleton<UserService>();
-builder.Services.AddSingleton<ChatService>();
-builder.Services.AddSingleton<TokenService>();
+// База данных: контекст EF Core поверх SQLite.
+// Scoped означает: свой экземпляр на каждый HTTP-запрос.
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseSqlite(builder.Configuration.GetConnectionString("Default")));
+
+// Хранилище теперь на базе. Сервисы об этом не узнают: контракт тот же.
+builder.Services.AddScoped<IStorage, EfStorage>();
+
+// Сервисы тоже стали Scoped, потому что зависят от хранилища.
+builder.Services.AddScoped<AuthService>();
+builder.Services.AddScoped<UserService>();
+builder.Services.AddScoped<ChatService>();
+builder.Services.AddScoped<TokenService>();
 
 var jwtKey = builder.Configuration["Jwt:Key"]!;
 var jwtIssuer = builder.Configuration["Jwt:Issuer"]!;
 var jwtAudience = builder.Configuration["Jwt:Audience"]!;
 
-// Проверяем присланные токены: подпись, издатель, адресат, срок.
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -40,7 +49,6 @@ builder.Services.AddAuthorization();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
-    // Кнопка Authorize в Swagger: вставил токен и тестируешь закрытые эндпоинты.
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         Name = "Authorization",
@@ -53,6 +61,12 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 var app = builder.Build();
+
+// При старте создаём файл базы и таблицы, если их ещё нет.
+using (var scope = app.Services.CreateScope())
+{
+    scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.EnsureCreated();
+}
 
 app.UseSwagger();
 app.UseSwaggerUI();
@@ -155,7 +169,6 @@ app.Run("http://localhost:5000");
 
 public static class ClaimsExtensions
 {
-    // Достаём Id пользователя прямо из токена.
     public static Guid UserId(this ClaimsPrincipal user)
     {
         return Guid.Parse(user.FindFirst(ClaimTypes.NameIdentifier)!.Value);
@@ -229,4 +242,3 @@ public record MessageDto(Guid Id, Guid ChatId, Guid SenderId, string SenderName,
     {
     }
 }
-
