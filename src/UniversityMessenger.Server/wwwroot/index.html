@@ -43,7 +43,7 @@ document.getElementById('join').onclick = async () => {
     .withUrl('/hubs/chat', { accessTokenFactory: () => token })
     .withAutomaticReconnect()
     .build();
-  connection.on('MessageReceived', m => add(m.senderName + ': ' + m.text));
+  connection.on('MessageReceived', m => add(m.senderName + ': ' + m.ciphertext));
   connection.on('Error', e => add('Ошибка: ' + e));
   connection.on('Info', i => add('Инфо: ' + i));
   try {
@@ -69,3 +69,4 @@ document.getElementById('send').onclick = async () => {
 </script>
 </body>
 </html>
+

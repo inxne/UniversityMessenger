@@ -8,9 +8,6 @@ namespace UniversityMessenger.Core.Services;
 /// </summary>
 public class AuthService
 {
-    // Хранилище сервис получает извне через конструктор.
-    // Это внедрение зависимости: сервису всё равно,
-    // память это или база данных.
     private readonly IStorage _storage;
 
     public AuthService(IStorage storage)
@@ -20,8 +17,10 @@ public class AuthService
 
     /// <summary>
     /// Регистрирует нового пользователя и возвращает его.
+    /// PublicKey это публичный ключ шифрования устройства клиента.
+    /// До этапа П4 параметр необязательный, чтобы старый контракт сервера собирался.
     /// </summary>
-    public User Register(string email, string password, string fullName, Role role, string? faculty, int? course, bool consent)
+    public User Register(string email, string password, string fullName, Role role, string? faculty, int? course, bool consent, string publicKey = "")
     {
         if (!consent)
             throw new AppException("Регистрация невозможна без согласия на обработку персональных данных.");
@@ -49,6 +48,8 @@ public class AuthService
             Role = role,
             Faculty = faculty,
             Course = course,
+            // Публичный ключ устройства, приватный остаётся у клиента.
+            PublicKey = publicKey,
             ConsentAt = DateTime.UtcNow
         };
 

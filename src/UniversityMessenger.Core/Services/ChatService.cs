@@ -5,6 +5,7 @@ namespace UniversityMessenger.Core.Services;
 
 /// <summary>
 /// Чаты, участники и сообщения.
+/// Содержимое сообщений для сервиса непрозрачно: только шифротекст.
 /// </summary>
 public class ChatService
 {
@@ -88,12 +89,13 @@ public class ChatService
     }
 
     /// <summary>
-    /// Отправляет сообщение, предварительно проверив участие в чате.
+    /// Отправляет сообщение. Принимает шифротекст как непрозрачную строку:
+    /// сервис не видит и не проверяет содержимое, только непустоту и право отправителя.
     /// </summary>
-    public Message SendMessage(Guid chatId, Guid senderId, string text)
+    public Message SendMessage(Guid chatId, Guid senderId, string ciphertext)
     {
-        if (string.IsNullOrWhiteSpace(text))
-            throw new AppException("Текст сообщения не может быть пустым.");
+        if (string.IsNullOrWhiteSpace(ciphertext))
+            throw new AppException("Шифротекст сообщения не может быть пустым.");
 
         if (_storage.GetChatById(chatId) == null)
             throw new AppException("Чат не найден.");
@@ -105,7 +107,7 @@ public class ChatService
         {
             ChatId = chatId,
             SenderId = senderId,
-            Text = text.Trim()
+            Ciphertext = ciphertext
         };
         _storage.AddMessage(message);
         return message;
@@ -113,6 +115,7 @@ public class ChatService
 
     /// <summary>
     /// История сообщений чата. Доступна только участникам.
+    /// Возвращает шифротексты: расшифровка произойдёт на устройстве получателя.
     /// </summary>
     public List<Message> GetHistory(Guid chatId, Guid userId)
     {

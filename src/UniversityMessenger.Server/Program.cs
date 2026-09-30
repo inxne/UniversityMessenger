@@ -259,9 +259,10 @@ public record ChatDto(Guid Id, ChatType Type, string? Name, DateTime CreatedAt, 
     }
 }
 
-public record MessageDto(Guid Id, Guid ChatId, Guid SenderId, string SenderName, string Text, DateTime CreatedAt)
+public record MessageDto(Guid Id, Guid ChatId, Guid SenderId, string SenderName, string Ciphertext, DateTime CreatedAt)
 {
-    public MessageDto(Message m, string senderName) : this(m.Id, m.ChatId, m.SenderId, senderName, m.Text, m.CreatedAt)
+    public MessageDto(Message m, string senderName) : this(m.Id, m.ChatId, m.SenderId, senderName, m.Ciphertext, m.CreatedAt)
     {
     }
 }
+
