@@ -1,108 +1,61 @@
-﻿using UniversityMessenger.Core.Models;
-using UniversityMessenger.Core.Services;
-using UniversityMessenger.Core.Storage;
+﻿using UniversityMessenger.Core.Crypto;
 
-// --- Сборка приложения: хранилище плюс сервисы ---
-IStorage storage = new InMemoryStorage();
-var authService = new AuthService(storage);
-var userService = new UserService(storage);
-var chatService = new ChatService(storage);
-
-// --- 1. Регистрируем трёх пользователей ---
-var student = authService.Register(
-    email: "student@test.local",
-    password: "Student123!",
-    fullName: "Иванов Иван Иванович",
-    role: Role.Student,
-    faculty: "Информационные технологии",
-    course: 2,
-    consent: true);
-
-var teacher = authService.Register(
-    email: "teacher@test.local",
-    password: "Teacher123!",
-    fullName: "Петрова Анна Сергеевна",
-    role: Role.Teacher,
-    faculty: "Информационные технологии",
-    course: null,
-    consent: true);
-
-var admin = authService.Register(
-    email: "admin@test.local",
-    password: "Admin12345!",
-    fullName: "Сидоров Алексей Дмитриевич",
-    role: Role.Admin,
-    faculty: null,
-    course: null,
-    consent: true);
-
-Console.WriteLine("Зарегистрированы:");
-Console.WriteLine($"- {student.FullName} ({student.Role})");
-Console.WriteLine($"- {teacher.FullName} ({teacher.Role})");
-Console.WriteLine($"- {admin.FullName} ({admin.Role})");
-
-// --- 2. Вход под студентом ---
-var logged = authService.Login("student@test.local", "Student123!");
+Console.WriteLine("=== Демонстрация оконечного шифрования: слепой сервер ===");
 Console.WriteLine();
-Console.WriteLine($"Вход выполнен: {logged.FullName}");
 
-// --- 2.1. Проверка защиты: неверный пароль ---
+// 1. Клиенты создают пары ключей. Приватные не покидают устройства.
+var alice = EndToEndCrypto.CreateKeyPair();
+var bob = EndToEndCrypto.CreateKeyPair();
+
+Console.WriteLine("Алиса и Боб создали пары ключей на устройствах.");
+Console.WriteLine($"Публичный ключ Алисы (виден серверу): {alice.PublicKeyBase64[..24]}...");
+Console.WriteLine($"Публичный ключ Боба (виден серверу): {bob.PublicKeyBase64[..24]}...");
+Console.WriteLine();
+
+// 2. Обмен публичными ключами через сервер и вывод общего секрета.
+var aliceKey = EndToEndCrypto.DeriveSharedKey(alice.PrivateKeyBase64, bob.PublicKeyBase64);
+var bobKey = EndToEndCrypto.DeriveSharedKey(bob.PrivateKeyBase64, alice.PublicKeyBase64);
+
+Console.WriteLine($"Секреты сторон совпали без передачи по сети: {Convert.ToHexString(aliceKey) == Convert.ToHexString(bobKey)}");
+Console.WriteLine();
+
+// 3. Алиса шифрует сообщение. На сервер уезжает только шифротекст.
+var plaintext = "Отчёт по проекту готов, посмотри вечером.";
+var packed = EndToEndCrypto.Encrypt(plaintext, aliceKey);
+
+Console.WriteLine($"Открытый текст Алисы: {plaintext}");
+Console.WriteLine($"На сервер ушло: {packed}");
+Console.WriteLine();
+
+// 4. Дамп сервера: что увидит злоумышленник при изъятии.
+Console.WriteLine("ДАМП СЕРВЕРА (взгляд злоумышленника):");
+Console.WriteLine($"  запись 1: {packed}");
+Console.WriteLine("  Ключей нет. Открытых текстов нет. Расшифровка невозможна.");
+Console.WriteLine();
+
+// 5. Боб получает шифротекст и расшифровывает на своём устройстве.
+var decrypted = EndToEndCrypto.Decrypt(packed, bobKey);
+Console.WriteLine($"Боб расшифровал у себя: {decrypted}");
+Console.WriteLine();
+
+// 6. Целостность: подмена шифротекста обнаруживается при расшифровке.
+var chars = packed.ToCharArray();
+var middle = chars.Length / 2;
+chars[middle] = chars[middle] == 'A' ? 'B' : 'A';
+var tampered = new string(chars);
+
 try
 {
-    authService.Login("student@test.local", "wrong-password");
+    EndToEndCrypto.Decrypt(tampered, bobKey);
+    Console.WriteLine("ОШИБКА: подмена не замечена!");
 }
-catch (AppException ex)
+catch (System.Security.Cryptography.CryptographicException)
 {
-    Console.WriteLine($"Ожидаемая ошибка входа: {ex.Message}");
+    Console.WriteLine("Подмена обнаружена: изменённый шифротекст отклонён при расшифровке.");
 }
 
-// --- 3. Поиск пользователя по фамилии ---
-var found = userService.Search(query: "петрова");
+// 7. Отпечатки ключей для сверки глазами между пользователями.
 Console.WriteLine();
-Console.WriteLine($"Поиск по запросу петрова: найдено {found.Count}");
-foreach (var u in found)
-{
-    Console.WriteLine($"- {u.FullName}, {u.Role}, {u.Faculty}");
-}
-
-// --- 4. Личный чат и переписка ---
-var directChat = chatService.GetOrCreateDirectChat(student.Id, teacher.Id);
-var directAgain = chatService.GetOrCreateDirectChat(teacher.Id, student.Id);
-Console.WriteLine();
-Console.WriteLine($"Личный чат создан. Повторный вызов вернул тот же чат: {directAgain.Id == directChat.Id}");
-
-chatService.SendMessage(directChat.Id, student.Id, "Здравствуйте! Можно задать вопрос по проекту?");
-chatService.SendMessage(directChat.Id, teacher.Id, "Да, конечно. Слушаю.");
-chatService.SendMessage(directChat.Id, student.Id, "Как оформить диаграмму архитектуры?");
-
-// --- 5. Групповой чат ---
-var groupChat = chatService.CreateGroupChat("ИТ-201: Проектная деятельность", teacher.Id, new List<Guid> { student.Id, admin.Id });
-chatService.SendMessage(groupChat.Id, teacher.Id, "Коллеги, защита проекта в пятницу.");
-
-// --- 6. История сообщений ---
-Console.WriteLine();
-Console.WriteLine($"История личного чата ({chatService.GetChatTitle(directChat.Id, student.Id)}):");
-foreach (var message in chatService.GetHistory(directChat.Id, student.Id))
-{
-    var author = authService.GetById(message.SenderId);
-    Console.WriteLine($"[{message.CreatedAt:HH:mm}] {author.FullName}: {message.Text}");
-}
-
-Console.WriteLine();
-Console.WriteLine($"История группы ({chatService.GetChatTitle(groupChat.Id, student.Id)}):");
-foreach (var message in chatService.GetHistory(groupChat.Id, student.Id))
-{
-    var author = authService.GetById(message.SenderId);
-    Console.WriteLine($"[{message.CreatedAt:HH:mm}] {author.FullName}: {message.Text}");
-}
-
-// --- 7. Список чатов студента ---
-Console.WriteLine();
-Console.WriteLine("Чаты студента:");
-foreach (var chat in chatService.GetChatsOfUser(student.Id))
-{
-    var title = chatService.GetChatTitle(chat.Id, student.Id);
-    var last = chatService.GetHistory(chat.Id, student.Id).LastOrDefault();
-    var lastText = last == null ? "нет сообщений" : last.Text;
-    Console.WriteLine($"- {title}: {lastText}");
-}
+Console.WriteLine($"Отпечаток ключа Алисы: {EndToEndCrypto.GetFingerprint(alice.PublicKeyBase64)}");
+Console.WriteLine($"Отпечаток ключа Боба: {EndToEndCrypto.GetFingerprint(bob.PublicKeyBase64)}");
+Console.WriteLine("Сверив эти строки по другому каналу, пользователи убеждаются, что ключи не подменены.");
