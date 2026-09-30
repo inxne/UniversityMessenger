@@ -2,6 +2,7 @@
 using System.Security.Claims;
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
@@ -9,22 +10,21 @@ using UniversityMessenger.Core.Data;
 using UniversityMessenger.Core.Models;
 using UniversityMessenger.Core.Services;
 using UniversityMessenger.Core.Storage;
+using UniversityMessenger.Server.Hubs;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// База данных: контекст EF Core поверх SQLite.
-// Scoped означает: свой экземпляр на каждый HTTP-запрос.
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("Default")));
 
-// Хранилище теперь на базе. Сервисы об этом не узнают: контракт тот же.
 builder.Services.AddScoped<IStorage, EfStorage>();
-
-// Сервисы тоже стали Scoped, потому что зависят от хранилища.
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<ChatService>();
 builder.Services.AddScoped<TokenService>();
+
+// SignalR: реалтайм-доставка сообщений.
+builder.Services.AddSignalR();
 
 var jwtKey = builder.Configuration["Jwt:Key"]!;
 var jwtIssuer = builder.Configuration["Jwt:Issuer"]!;
@@ -42,6 +42,23 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
+        };
+
+        // WebSocket не умеет заголовки, поэтому клиент SignalR
+        // передаёт токен параметром access_token в строке запроса.
+        // Учим мидлвар брать его оттуда для адресов /hubs.
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var accessToken = context.Request.Query["access_token"];
+                var path = context.Request.Path;
+                if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+                {
+                    context.Token = accessToken;
+                }
+                return Task.CompletedTask;
+            }
         };
     });
 builder.Services.AddAuthorization();
@@ -62,7 +79,6 @@ builder.Services.AddSwaggerGen(c =>
 
 var app = builder.Build();
 
-// При старте создаём файл базы и таблицы, если их ещё нет.
 using (var scope = app.Services.CreateScope())
 {
     scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.EnsureCreated();
@@ -70,6 +86,7 @@ using (var scope = app.Services.CreateScope())
 
 app.UseSwagger();
 app.UseSwaggerUI();
+app.UseStaticFiles();
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -102,7 +119,7 @@ app.MapPost("/api/auth/login", (LoginRequest req, AuthService auth, TokenService
     }
 });
 
-// --- Закрытые эндпоинты: кто ты, сервер знает из токена ---
+// --- Закрытые эндпоинты ---
 
 app.MapGet("/api/users", (string? query, Role? role, string? faculty, int? course, UserService users) =>
     Results.Ok(users.Search(query, role, faculty, course).Select(u => new UserDto(u)))).RequireAuthorization();
@@ -137,13 +154,16 @@ app.MapGet("/api/chats", (ClaimsPrincipal caller, ChatService chats) =>
     return Results.Ok(chats.GetChatsOfUser(id).Select(c => new ChatDto(c, chats.GetChatTitle(c.Id, id))));
 }).RequireAuthorization();
 
-app.MapPost("/api/chats/{chatId:guid}/messages", (Guid chatId, ClaimsPrincipal caller, SendMessageRequest req, ChatService chats, AuthService auth) =>
+// Отправка через REST тоже рассылает сообщение подключённым клиентам.
+app.MapPost("/api/chats/{chatId:guid}/messages", async (Guid chatId, ClaimsPrincipal caller, SendMessageRequest req, ChatService chats, AuthService auth, IHubContext<ChatHub> hub) =>
 {
     try
     {
         var senderId = caller.UserId();
         var message = chats.SendMessage(chatId, senderId, req.Text);
-        return Results.Ok(new MessageDto(message, auth.GetById(senderId).FullName));
+        var dto = new MessageDto(message, auth.GetById(senderId).FullName);
+        await hub.Clients.Group(chatId.ToString()).SendAsync("MessageReceived", dto);
+        return Results.Ok(dto);
     }
     catch (AppException ex)
     {
@@ -162,6 +182,9 @@ app.MapGet("/api/chats/{chatId:guid}/messages", (Guid chatId, ClaimsPrincipal ca
         return Results.BadRequest(new { error = ex.Message });
     }
 }).RequireAuthorization();
+
+// Точка подключения SignalR.
+app.MapHub<ChatHub>("/hubs/chat");
 
 app.Run("http://localhost:5000");
 
