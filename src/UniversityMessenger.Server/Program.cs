@@ -23,7 +23,6 @@ builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<ChatService>();
 builder.Services.AddScoped<TokenService>();
 
-// SignalR: реалтайм-доставка сообщений.
 builder.Services.AddSignalR();
 
 var jwtKey = builder.Configuration["Jwt:Key"]!;
@@ -44,9 +43,6 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
         };
 
-        // WebSocket не умеет заголовки, поэтому клиент SignalR
-        // передаёт токен параметром access_token в строке запроса.
-        // Учим мидлвар брать его оттуда для адресов /hubs.
         options.Events = new JwtBearerEvents
         {
             OnMessageReceived = context =>
@@ -94,11 +90,15 @@ app.MapGet("/api/health", () => Results.Ok(new { status = "ok", service = "Unive
 
 // --- Открытые эндпоинты ---
 
+// Регистрация теперь ОБЯЗАНА принимать публичный ключ устройства.
 app.MapPost("/api/auth/register", (RegisterRequest req, AuthService auth) =>
 {
     try
     {
-        return Results.Ok(new UserDto(auth.Register(req.Email, req.Password, req.FullName, req.Role, req.Faculty, req.Course, req.Consent)));
+        if (string.IsNullOrWhiteSpace(req.PublicKey))
+            return Results.BadRequest(new { error = "Публичный ключ обязателен при регистрации." });
+
+        return Results.Ok(new UserDto(auth.Register(req.Email, req.Password, req.FullName, req.Role, req.Faculty, req.Course, req.Consent, req.PublicKey)));
     }
     catch (AppException ex)
     {
@@ -119,10 +119,25 @@ app.MapPost("/api/auth/login", (LoginRequest req, AuthService auth, TokenService
     }
 });
 
-// --- Закрытые эндпоинты ---
+// --- Закрытые эндпоинты: сервер работает только с шифротекстами ---
 
 app.MapGet("/api/users", (string? query, Role? role, string? faculty, int? course, UserService users) =>
     Results.Ok(users.Search(query, role, faculty, course).Select(u => new UserDto(u)))).RequireAuthorization();
+
+// Отдельный эндпоинт для получения публичного ключа собеседника
+// (нужен клиенту для вывода общего секрета ECDH).
+app.MapGet("/api/users/{id:guid}/public-key", (Guid id, AuthService auth) =>
+{
+    try
+    {
+        var user = auth.GetById(id);
+        return Results.Ok(new { userId = user.Id, publicKey = user.PublicKey });
+    }
+    catch (AppException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+}).RequireAuthorization();
 
 app.MapPost("/api/chats/direct", (ClaimsPrincipal caller, DirectChatRequest req, ChatService chats) =>
 {
@@ -154,13 +169,13 @@ app.MapGet("/api/chats", (ClaimsPrincipal caller, ChatService chats) =>
     return Results.Ok(chats.GetChatsOfUser(id).Select(c => new ChatDto(c, chats.GetChatTitle(c.Id, id))));
 }).RequireAuthorization();
 
-// Отправка через REST тоже рассылает сообщение подключённым клиентам.
-app.MapPost("/api/chats/{chatId:guid}/messages", async (Guid chatId, ClaimsPrincipal caller, SendMessageRequest req, ChatService chats, AuthService auth, IHubContext<ChatHub> hub) =>
+// Отправка: сервер принимает ТОЛЬКО шифротекст. Открытый текст сюда попасть не может.
+app.MapPost("/api/chats/{chatId:guid}/messages", async (Guid chatId, ClaimsPrincipal caller, SendCiphertextRequest req, ChatService chats, AuthService auth, IHubContext<ChatHub> hub) =>
 {
     try
     {
         var senderId = caller.UserId();
-        var message = chats.SendMessage(chatId, senderId, req.Text);
+        var message = chats.SendMessage(chatId, senderId, req.Ciphertext);
         var dto = new MessageDto(message, auth.GetById(senderId).FullName);
         await hub.Clients.Group(chatId.ToString()).SendAsync("MessageReceived", dto);
         return Results.Ok(dto);
@@ -183,7 +198,6 @@ app.MapGet("/api/chats/{chatId:guid}/messages", (Guid chatId, ClaimsPrincipal ca
     }
 }).RequireAuthorization();
 
-// Точка подключения SignalR.
 app.MapHub<ChatHub>("/hubs/chat");
 
 app.Run("http://localhost:5000");
@@ -236,18 +250,22 @@ public class TokenService
     }
 }
 
-// --- Контракты ---
+// --- Контракты: сервер принимает и отдаёт только шифротексты ---
 
-public record RegisterRequest(string Email, string Password, string FullName, Role Role, string? Faculty, int? Course, bool Consent);
+public record RegisterRequest(string Email, string Password, string FullName, Role Role, string? Faculty, int? Course, bool Consent, string PublicKey);
 public record LoginRequest(string Email, string Password);
 public record DirectChatRequest(Guid OtherUserId);
 public record GroupChatRequest(string Name, List<Guid> MemberIds);
-public record SendMessageRequest(string Text);
+
+// Контракт отправки: сервер принимает только шифротекст, открытый текст невозможен.
+public record SendCiphertextRequest(string Ciphertext);
+
 public record LoginResponse(string Token, DateTime ExpiresAt, UserDto User);
 
-public record UserDto(Guid Id, string Email, string FullName, Role Role, string? Faculty, int? Course, bool IsVerified, bool IsActive)
+// DTO пользователя отдаёт публичный ключ, чтобы клиенты могли вывести общий секрет.
+public record UserDto(Guid Id, string Email, string FullName, Role Role, string? Faculty, int? Course, string PublicKey, bool IsVerified, bool IsActive)
 {
-    public UserDto(User u) : this(u.Id, u.Email, u.FullName, u.Role, u.Faculty, u.Course, u.IsVerified, u.IsActive)
+    public UserDto(User u) : this(u.Id, u.Email, u.FullName, u.Role, u.Faculty, u.Course, u.PublicKey, u.IsVerified, u.IsActive)
     {
     }
 }
@@ -265,4 +283,3 @@ public record MessageDto(Guid Id, Guid ChatId, Guid SenderId, string SenderName,
     {
     }
 }
-
