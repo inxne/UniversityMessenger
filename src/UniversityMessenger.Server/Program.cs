@@ -90,7 +90,6 @@ app.MapGet("/api/health", () => Results.Ok(new { status = "ok", service = "Unive
 
 // --- Открытые эндпоинты ---
 
-// Регистрация теперь ОБЯЗАНА принимать публичный ключ устройства.
 app.MapPost("/api/auth/register", (RegisterRequest req, AuthService auth) =>
 {
     try
@@ -119,13 +118,11 @@ app.MapPost("/api/auth/login", (LoginRequest req, AuthService auth, TokenService
     }
 });
 
-// --- Закрытые эндпоинты: сервер работает только с шифротекстами ---
+// --- Закрытые эндпоинты ---
 
 app.MapGet("/api/users", (string? query, Role? role, string? faculty, int? course, UserService users) =>
     Results.Ok(users.Search(query, role, faculty, course).Select(u => new UserDto(u)))).RequireAuthorization();
 
-// Отдельный эндпоинт для получения публичного ключа собеседника
-// (нужен клиенту для вывода общего секрета ECDH).
 app.MapGet("/api/users/{id:guid}/public-key", (Guid id, AuthService auth) =>
 {
     try
@@ -151,11 +148,14 @@ app.MapPost("/api/chats/direct", (ClaimsPrincipal caller, DirectChatRequest req,
     }
 }).RequireAuthorization();
 
+// Создание группы: клиент присылает конверты ключа группы, по одному на участника.
+// Сервер хранит конверты, но открыть не может ни один.
 app.MapPost("/api/chats/group", (ClaimsPrincipal caller, GroupChatRequest req, ChatService chats) =>
 {
     try
     {
-        return Results.Ok(new ChatDto(chats.CreateGroupChat(req.Name, caller.UserId(), req.MemberIds)));
+        var wraps = req.KeyWraps.Select(k => new ChatKeyWrap { ForUserId = k.UserId, WrappedKey = k.WrappedKey }).ToList();
+        return Results.Ok(new ChatDto(chats.CreateGroupChat(req.Name, caller.UserId(), req.MemberIds, wraps)));
     }
     catch (AppException ex)
     {
@@ -169,7 +169,19 @@ app.MapGet("/api/chats", (ClaimsPrincipal caller, ChatService chats) =>
     return Results.Ok(chats.GetChatsOfUser(id).Select(c => new ChatDto(c, chats.GetChatTitle(c.Id, id))));
 }).RequireAuthorization();
 
-// Отправка: сервер принимает ТОЛЬКО шифротекст. Открытый текст сюда попасть не может.
+// Участник забирает свой конверт ключа группы.
+app.MapGet("/api/chats/{chatId:guid}/key-wraps", (Guid chatId, ClaimsPrincipal caller, ChatService chats) =>
+{
+    try
+    {
+        return Results.Ok(chats.GetKeyWrapsForUser(chatId, caller.UserId()).Select(w => new KeyWrapDto(w.ForUserId, w.WrappedKey)));
+    }
+    catch (AppException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+}).RequireAuthorization();
+
 app.MapPost("/api/chats/{chatId:guid}/messages", async (Guid chatId, ClaimsPrincipal caller, SendCiphertextRequest req, ChatService chats, AuthService auth, IHubContext<ChatHub> hub) =>
 {
     try
@@ -250,19 +262,22 @@ public class TokenService
     }
 }
 
-// --- Контракты: сервер принимает и отдаёт только шифротексты ---
+// --- Контракты ---
 
 public record RegisterRequest(string Email, string Password, string FullName, Role Role, string? Faculty, int? Course, bool Consent, string PublicKey);
 public record LoginRequest(string Email, string Password);
 public record DirectChatRequest(Guid OtherUserId);
-public record GroupChatRequest(string Name, List<Guid> MemberIds);
 
-// Контракт отправки: сервер принимает только шифротекст, открытый текст невозможен.
+// Конверт ключа группы для одного участника.
+public record KeyWrapRequest(Guid UserId, string WrappedKey);
+
+// Группа: название, участники и конверты ключа для каждого.
+public record GroupChatRequest(string Name, List<Guid> MemberIds, List<KeyWrapRequest> KeyWraps);
+
 public record SendCiphertextRequest(string Ciphertext);
-
 public record LoginResponse(string Token, DateTime ExpiresAt, UserDto User);
+public record KeyWrapDto(Guid ForUserId, string WrappedKey);
 
-// DTO пользователя отдаёт публичный ключ, чтобы клиенты могли вывести общий секрет.
 public record UserDto(Guid Id, string Email, string FullName, Role Role, string? Faculty, int? Course, string PublicKey, bool IsVerified, bool IsActive)
 {
     public UserDto(User u) : this(u.Id, u.Email, u.FullName, u.Role, u.Faculty, u.Course, u.PublicKey, u.IsVerified, u.IsActive)

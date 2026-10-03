@@ -5,7 +5,7 @@ namespace UniversityMessenger.Core.Services;
 
 /// <summary>
 /// Чаты, участники и сообщения.
-/// Содержимое сообщений для сервиса непрозрачно: только шифротекст.
+/// Содержимое сообщений и ключи для сервиса непрозрачны.
 /// </summary>
 public class ChatService
 {
@@ -18,7 +18,6 @@ public class ChatService
 
     /// <summary>
     /// Личный чат: возвращает существующий или создаёт новый.
-    /// DirectKey гарантирует, что пара людей имеет ровно один личный чат.
     /// </summary>
     public Chat GetOrCreateDirectChat(Guid user1Id, Guid user2Id)
     {
@@ -40,10 +39,6 @@ public class ChatService
         return chat;
     }
 
-    /// <summary>
-    /// Ключ личного чата: два Id, отсортированных по возрастанию, через двоеточие.
-    /// Сортировка нужна, чтобы пара A-B и пара B-A давали один и тот же ключ.
-    /// </summary>
     private static string MakeDirectKey(Guid a, Guid b)
     {
         var ids = new[] { a, b }.OrderBy(x => x).ToArray();
@@ -52,11 +47,22 @@ public class ChatService
 
     /// <summary>
     /// Создаёт групповой чат. Создатель получает роль Owner.
+    /// keyWraps это конверты ключа группы: по одному на каждого участника
+    /// включая самого создателя, иначе при повторном входе он не откроет чат.
+    /// Сервис не видит содержимое конвертов, только полноту набора.
     /// </summary>
-    public Chat CreateGroupChat(string name, Guid creatorId, List<Guid> memberIds)
+    public Chat CreateGroupChat(string name, Guid creatorId, List<Guid> memberIds, List<ChatKeyWrap> keyWraps)
     {
         if (string.IsNullOrWhiteSpace(name))
             throw new AppException("Название группы не может быть пустым.");
+
+        var expected = memberIds.Where(id => id != creatorId).Append(creatorId).Distinct().ToList();
+
+        foreach (var userId in expected)
+        {
+            if (keyWraps.Count(w => w.ForUserId == userId) != 1)
+                throw new AppException("Не каждый участник обеспечен обёрнутым ключом группы.");
+        }
 
         var chat = new Chat
         {
@@ -64,6 +70,13 @@ public class ChatService
             Name = name.Trim(),
             CreatedByUserId = creatorId
         };
+
+        foreach (var wrap in keyWraps)
+        {
+            wrap.ChatId = chat.Id;
+            chat.KeyWraps.Add(wrap);
+        }
+
         _storage.AddChat(chat);
 
         _storage.AddChatMember(new ChatMember
@@ -75,7 +88,6 @@ public class ChatService
 
         foreach (var memberId in memberIds)
         {
-            // Создателя второй раз не добавляем.
             if (memberId == creatorId)
                 continue;
 
@@ -89,8 +101,7 @@ public class ChatService
     }
 
     /// <summary>
-    /// Отправляет сообщение. Принимает шифротекст как непрозрачную строку:
-    /// сервис не видит и не проверяет содержимое, только непустоту и право отправителя.
+    /// Отправляет сообщение. Принимает шифротекст как непрозрачную строку.
     /// </summary>
     public Message SendMessage(Guid chatId, Guid senderId, string ciphertext)
     {
@@ -115,7 +126,6 @@ public class ChatService
 
     /// <summary>
     /// История сообщений чата. Доступна только участникам.
-    /// Возвращает шифротексты: расшифровка произойдёт на устройстве получателя.
     /// </summary>
     public List<Message> GetHistory(Guid chatId, Guid userId)
     {
@@ -123,6 +133,20 @@ public class ChatService
             throw new AppException("Вы не состоите в этом чате.");
 
         return _storage.GetMessagesOfChat(chatId);
+    }
+
+    /// <summary>
+    /// Конверт ключа группы для конкретного участника.
+    /// Участник открывает его своим парным секретом с создателем.
+    /// </summary>
+    public List<ChatKeyWrap> GetKeyWrapsForUser(Guid chatId, Guid userId)
+    {
+        if (!_storage.IsChatMember(chatId, userId))
+            throw new AppException("Вы не состоите в этом чате.");
+
+        var chat = _storage.GetChatById(chatId) ?? throw new AppException("Чат не найден.");
+
+        return chat.KeyWraps.Where(w => w.ForUserId == userId).ToList();
     }
 
     /// <summary>
@@ -143,8 +167,7 @@ public class ChatService
     }
 
     /// <summary>
-    /// Заголовок чата для показа в списке:
-    /// для группы это её название, для личного чата это ФИО собеседника.
+    /// Заголовок чата для показа в списке.
     /// </summary>
     public string GetChatTitle(Guid chatId, Guid forUserId)
     {

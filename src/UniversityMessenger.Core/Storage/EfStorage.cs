@@ -1,12 +1,12 @@
-﻿using UniversityMessenger.Core.Data;
+﻿using Microsoft.EntityFrameworkCore;
+using UniversityMessenger.Core.Data;
 using UniversityMessenger.Core.Models;
 
 namespace UniversityMessenger.Core.Storage;
 
 /// <summary>
 /// Хранилище поверх SQLite через EF Core.
-/// Реализует тот же контракт IStorage, что и InMemoryStorage,
-/// поэтому сервисы не замечают подмены.
+/// Реализует тот же контракт IStorage, что и InMemoryStorage.
 /// </summary>
 public class EfStorage : IStorage
 {
@@ -39,7 +39,7 @@ public class EfStorage : IStorage
         return _db.Users.ToList();
     }
 
-    // Чаты
+    // Чаты. Include подгружает конверты ключей вместе с чатом.
     public void AddChat(Chat chat)
     {
         _db.Chats.Add(chat);
@@ -48,7 +48,7 @@ public class EfStorage : IStorage
 
     public Chat? GetChatById(Guid id)
     {
-        return _db.Chats.FirstOrDefault(c => c.Id == id);
+        return _db.Chats.Include(c => c.KeyWraps).FirstOrDefault(c => c.Id == id);
     }
 
     public Chat? GetDirectChatByKey(string directKey)

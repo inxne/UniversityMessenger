@@ -5,7 +5,6 @@ namespace UniversityMessenger.Core.Data;
 
 /// <summary>
 /// Контекст базы данных: описание таблиц и правил схемы.
-/// EF Core превращает наши классы в таблицы SQLite.
 /// </summary>
 public class AppDbContext : DbContext
 {
@@ -17,6 +16,7 @@ public class AppDbContext : DbContext
     public DbSet<Chat> Chats => Set<Chat>();
     public DbSet<ChatMember> ChatMembers => Set<ChatMember>();
     public DbSet<Message> Messages => Set<Message>();
+    public DbSet<ChatKeyWrap> ChatKeyWraps => Set<ChatKeyWrap>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -25,5 +25,8 @@ public class AppDbContext : DbContext
 
         // Ключ личного чата уникален: одна пара людей имеет один личный чат.
         modelBuilder.Entity<Chat>().HasIndex(c => c.DirectKey).IsUnique();
+
+        // У участника ровно один конверт ключа на чат.
+        modelBuilder.Entity<ChatKeyWrap>().HasIndex(w => new { w.ChatId, w.ForUserId }).IsUnique();
     }
 }

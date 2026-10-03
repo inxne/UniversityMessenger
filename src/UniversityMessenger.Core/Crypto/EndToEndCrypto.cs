@@ -17,9 +17,6 @@ public static class EndToEndCrypto
     /// </summary>
     public record KeyPair(string PrivateKeyBase64, string PublicKeyBase64);
 
-    /// <summary>
-    /// Создание пары ключей на эллиптической кривой.
-    /// </summary>
     public static KeyPair CreateKeyPair()
     {
         using var ecdh = ECDiffieHellman.Create();
@@ -29,8 +26,7 @@ public static class EndToEndCrypto
     }
 
     /// <summary>
-    /// Вывод общего секрета чата: ECDH(мой приватный, публичный собеседника).
-    /// Обе стороны получают одинаковое значение, не передавая секрет по сети.
+    /// Вывод общего секрета: ECDH(мой приватный, публичный собеседника).
     /// </summary>
     public static byte[] DeriveSharedKey(string myPrivateKeyBase64, string otherPublicKeyBase64)
     {
@@ -44,8 +40,7 @@ public static class EndToEndCrypto
     }
 
     /// <summary>
-    /// Шифрование текста общим ключом.
-    /// Результат: base64 от склейки nonce + tag + шифротекст.
+    /// Шифрование текста общим ключом. Результат: base64(nonce + tag + шифротекст).
     /// </summary>
     public static string Encrypt(string plaintext, byte[] key)
     {
@@ -65,8 +60,7 @@ public static class EndToEndCrypto
     }
 
     /// <summary>
-    /// Расшифровка на устройстве получателя.
-    /// Бросает CryptographicException, если шифротекст подменён или повреждён.
+    /// Расшифровка. Бросает CryptographicException при подмене шифротекста.
     /// </summary>
     public static string Decrypt(string packedBase64, byte[] key)
     {
@@ -83,8 +77,24 @@ public static class EndToEndCrypto
     }
 
     /// <summary>
+    /// Конверт для группового ключа: шифруем ключ группы парным секретом
+    /// создателя и конкретного участника. Открыть может только адресат.
+    /// </summary>
+    public static string WrapKey(byte[] sharedKey, byte[] keyToWrap)
+    {
+        return Encrypt(Convert.ToBase64String(keyToWrap), sharedKey);
+    }
+
+    /// <summary>
+    /// Вскрытие конверта: адресат получает ключ группы обратно.
+    /// </summary>
+    public static byte[] UnwrapKey(byte[] sharedKey, string wrappedBase64)
+    {
+        return Convert.FromBase64String(Decrypt(wrappedBase64, sharedKey));
+    }
+
+    /// <summary>
     /// Отпечаток публичного ключа для сверки глазами между пользователями.
-    /// Защита от подмены ключа посредником.
     /// </summary>
     public static string GetFingerprint(string publicKeyBase64)
     {

@@ -59,3 +59,35 @@ Console.WriteLine();
 Console.WriteLine($"Отпечаток ключа Алисы: {EndToEndCrypto.GetFingerprint(alice.PublicKeyBase64)}");
 Console.WriteLine($"Отпечаток ключа Боба: {EndToEndCrypto.GetFingerprint(bob.PublicKeyBase64)}");
 Console.WriteLine("Сверив эти строки по другому каналу, пользователи убеждаются, что ключи не подменены.");
+
+// 8. Группа: ключ рождается на устройстве создателя и едет в конвертах.
+Console.WriteLine();
+Console.WriteLine("=== Группа: ключ внутри конвертов ===");
+
+var groupKey = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+
+// Конверт для Боба: зашифрован парным секретом Алисы и Боба.
+var wrapForBob = EndToEndCrypto.WrapKey(aliceKey, groupKey);
+Console.WriteLine($"Конверт для Боба (видит сервер): {wrapForBob}");
+
+// Боб вскрывает конверт своим парным секретом и достаёт ключ группы.
+var bobGroupKey = EndToEndCrypto.UnwrapKey(bobKey, wrapForBob);
+Console.WriteLine($"Боб вскрыл конверт, ключ группы совпал: {Convert.ToHexString(bobGroupKey) == Convert.ToHexString(groupKey)}");
+
+// Сообщение в группу шифруется ключом группы.
+var groupMessage = EndToEndCrypto.Encrypt("Команда, стендап в десять утра.", groupKey);
+Console.WriteLine($"Сообщение в группу ушло на сервер: {groupMessage}");
+Console.WriteLine($"Боб расшифровал ключом из конверта: {EndToEndCrypto.Decrypt(groupMessage, bobGroupKey)}");
+
+// Посторонний не может вскрыть чужой конверт.
+try
+{
+    var eve = EndToEndCrypto.CreateKeyPair();
+    var eveKey = EndToEndCrypto.DeriveSharedKey(eve.PrivateKeyBase64, alice.PublicKeyBase64);
+    EndToEndCrypto.UnwrapKey(eveKey, wrapForBob);
+    Console.WriteLine("ОШИБКА: посторонний вскрыл чужой конверт!");
+}
+catch (System.Security.Cryptography.CryptographicException)
+{
+    Console.WriteLine("Посторонняя Ева не открыла конверт Боба: конверт отклонён.");
+}
